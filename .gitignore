@@ -5,6 +5,8 @@ obj/
 *.suo
 publish/
 dist/
-browser/*.pem
+.idea/
+browser/chrome-extension.zip
+
 browser/*.crx
 **/*.pem

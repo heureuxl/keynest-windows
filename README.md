@@ -59,9 +59,18 @@ netsh http add urlacl url=http://127.0.0.1:17373/ user=%USERNAME%
 ## 与 macOS 的差异
 
 - 无原生菜单栏图标（Windows 使用托盘）。
-- 图标暂用系统默认；可将 `AppIcon.ico` 放入工程并写入 `csproj` 的 `ApplicationIcon`。
+- **应用与托盘图标**：见工程 `Assets/app.ico` 与 `ApplicationIcon` 配置。
 - UI 为简化版；后续可继续对齐 macOS 详情布局与版本号策略。
 
-## 许可
+## 规范与许可
 
-与主项目一致（MIT）；仓库位于 `KeyNest` / `KeyNestForWin` 时请以根目录 `LICENSE` 为准。
+| 文档 | 说明 |
+|------|------|
+| [LICENSE](LICENSE) | **MIT License** — 使用与再发布条件见文件全文。 |
+| [CONTRIBUTING.md](CONTRIBUTING.md) | 参与贡献的流程与约定。 |
+| [SECURITY.md](SECURITY.md) | 安全漏洞报告方式与范围。 |
+| [CODE_OF_CONDUCT.md](CODE_OF_CONDUCT.md) | 社区行为准则（Contributor Covenant 2.1 改编）。 |
+
+**版权**：Copyright (c) 2026 [heureuxl](mailto:lq_17395@163.com)
+
+若为主仓库 **KeyNest** 的 monorepo，仍以该仓库根目录 **LICENSE** 为准；本文件为 Windows 客户端仓库内同步说明。
