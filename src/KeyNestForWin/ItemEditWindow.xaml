@@ -1,26 +1,60 @@
 <Window x:Class="KeyNestForWin.ItemEditWindow"
         xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation"
         xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
-        Title="条目"
+        Title="编辑条目"
         SizeToContent="Height"
-        Width="440"
+        Width="460"
+        MinHeight="480"
         WindowStartupLocation="CenterOwner"
-        ResizeMode="NoResize">
-    <StackPanel Margin="16">
-        <TextBlock Text="标题"/>
-        <TextBox x:Name="TitleBox" Margin="0,4,0,12"/>
-        <TextBlock Text="用户名"/>
-        <TextBox x:Name="UsernameBox" Margin="0,4,0,12"/>
-        <TextBlock Text="密码"/>
-        <PasswordBox x:Name="PasswordBox" Margin="0,4,0,12"/>
-        <TextBlock Text="网站 URL（用于扩展匹配）"/>
-        <TextBox x:Name="UrlBox" Margin="0,4,0,12"/>
-        <TextBlock Text="备注"/>
-        <TextBox x:Name="NotesBox" AcceptsReturn="True" Height="64" TextWrapping="Wrap"
-                 VerticalScrollBarVisibility="Auto" Margin="0,4,0,12"/>
-        <StackPanel Orientation="Horizontal" HorizontalAlignment="Right" Margin="0,8,0,0">
-            <Button Content="取消" Width="88" Margin="0,0,8,0" IsCancel="True" Click="Cancel_Click"/>
-            <Button Content="保存" Width="88" IsDefault="True" Click="Save_Click"/>
-        </StackPanel>
-    </StackPanel>
+        ResizeMode="NoResize"
+        Background="{StaticResource Brush.WindowBg}">
+    <Border Background="{StaticResource Brush.WindowBg}" Padding="24">
+        <Border Background="{StaticResource Brush.SurfaceElevated}"
+                CornerRadius="16"
+                BorderBrush="{StaticResource Brush.Border}"
+                BorderThickness="1"
+                Padding="28,24">
+            <Border.Effect>
+                <DropShadowEffect Color="#000000" ShadowDepth="0" BlurRadius="28" Opacity="0.35"/>
+            </Border.Effect>
+            <StackPanel>
+                <TextBlock Text="条目详情" Style="{StaticResource TextTitleStyle}" FontSize="20" Margin="0,0,0,8"/>
+                <TextBlock Text="编辑密码条目字段，保存后即时写入保管库。" Style="{StaticResource TextCaptionStyle}" Margin="0,0,0,20"/>
+
+                <TextBlock Text="标题" Style="{StaticResource TextCaptionStyle}" Margin="0,0,0,6" Foreground="{StaticResource Brush.Text}"/>
+                <TextBox x:Name="TitleBox"/>
+
+                <TextBlock Text="用户名" Style="{StaticResource TextCaptionStyle}" Margin="0,14,0,6" Foreground="{StaticResource Brush.Text}"/>
+                <TextBox x:Name="UsernameBox"/>
+
+                <TextBlock Text="密码" Style="{StaticResource TextCaptionStyle}" Margin="0,14,0,6" Foreground="{StaticResource Brush.Text}"/>
+                <Grid MinHeight="40">
+                    <Grid.ColumnDefinitions>
+                        <ColumnDefinition Width="*"/>
+                        <ColumnDefinition Width="Auto"/>
+                    </Grid.ColumnDefinitions>
+                    <PasswordBox x:Name="PasswordBox" Grid.Column="0" MinHeight="40"/>
+                    <TextBox x:Name="PasswordPlain" Grid.Column="0" MinHeight="40"
+                             Visibility="Collapsed" VerticalContentAlignment="Center"/>
+                    <Button x:Name="PasswordToggle" Grid.Column="1" Content="显示"
+                            Click="PasswordToggle_Click"
+                            Style="{StaticResource GhostButtonStyle}"
+                            MinWidth="56" Margin="10,0,0,0" Padding="12,8"/>
+                </Grid>
+
+                <TextBlock Text="网站 URL（用于扩展匹配）" Style="{StaticResource TextCaptionStyle}" Margin="0,14,0,6" Foreground="{StaticResource Brush.Text}"/>
+                <TextBox x:Name="UrlBox"/>
+
+                <TextBlock Text="备注" Style="{StaticResource TextCaptionStyle}" Margin="0,14,0,6" Foreground="{StaticResource Brush.Text}"/>
+                <TextBox x:Name="NotesBox" AcceptsReturn="True" Height="88" TextWrapping="Wrap"
+                         VerticalScrollBarVisibility="Auto"/>
+
+                <StackPanel Orientation="Horizontal" HorizontalAlignment="Right" Margin="0,28,0,0">
+                    <Button Content="取消" Width="100" Margin="0,0,10,0" IsCancel="True" Click="Cancel_Click"/>
+                    <Button Content="保存" Width="100" Style="{StaticResource PrimaryButtonStyle}"
+                            IsDefault="True" Click="Save_Click"/>
+                </StackPanel>
+            </StackPanel>
+        </Border>
+    </Border>
 </Window>

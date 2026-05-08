@@ -12,5 +12,10 @@
     <Title>KeyNest</Title>
     <Product>KeyNest for Windows</Product>
     <Version>0.2.9</Version>
+    <ApplicationIcon>Assets\app.ico</ApplicationIcon>
   </PropertyGroup>
+
+  <ItemGroup>
+    <Resource Include="Assets\app.ico" />
+  </ItemGroup>
 </Project>

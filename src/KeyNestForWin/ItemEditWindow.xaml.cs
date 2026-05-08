@@ -12,6 +12,7 @@ public partial class ItemEditWindow : Window
     public ItemEditWindow(PasswordItemDto? existing)
     {
         InitializeComponent();
+        AppBranding.SetWindowIcon(this);
         _existing = existing;
         if (existing != null)
         {
@@ -25,6 +26,27 @@ public partial class ItemEditWindow : Window
         else
             Title = "新建条目";
     }
+
+    private void PasswordToggle_Click(object sender, RoutedEventArgs e)
+    {
+        if (PasswordPlain.Visibility == Visibility.Visible)
+        {
+            PasswordBox.Password = PasswordPlain.Text;
+            PasswordPlain.Visibility = Visibility.Collapsed;
+            PasswordBox.Visibility = Visibility.Visible;
+            PasswordToggle.Content = "显示";
+        }
+        else
+        {
+            PasswordPlain.Text = PasswordBox.Password;
+            PasswordPlain.Visibility = Visibility.Visible;
+            PasswordBox.Visibility = Visibility.Collapsed;
+            PasswordToggle.Content = "隐藏";
+        }
+    }
+
+    private string ReadPassword() =>
+        PasswordPlain.Visibility == Visibility.Visible ? PasswordPlain.Text : PasswordBox.Password;
 
     private void Cancel_Click(object sender, RoutedEventArgs e)
     {
@@ -40,7 +62,7 @@ public partial class ItemEditWindow : Window
             Id = id,
             Title = TitleBox.Text.Trim(),
             Username = UsernameBox.Text.Trim(),
-            Password = PasswordBox.Password,
+            Password = ReadPassword(),
             Url = UrlBox.Text.Trim(),
             Notes = NotesBox.Text.Trim()
         };

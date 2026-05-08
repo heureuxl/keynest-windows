@@ -1,4 +1,5 @@
 using System.Collections.ObjectModel;
+using System.IO;
 using System.Text.Json;
 using System.Text.Json.Serialization;
 using KeyNestForWin.Crypto;
@@ -224,6 +225,25 @@ public sealed class VaultService
         StateChanged?.Invoke(this, EventArgs.Empty);
     }
 
+    /// <summary>在已用主密码解锁的前提下生成新的恢复密钥，旧短语立即失效；返回新短语供界面展示。</summary>
+    public async Task<string> RotateRecoveryKeyAsync(CancellationToken ct = default)
+    {
+        if (!IsUnlocked || _dataKey == null || _masterPassword == null || _saltMaster == null)
+            throw new InvalidOperationException("请先使用主密码解锁保管库。");
+
+        var recoveryPhrase = VaultCryptography.GenerateRecoveryKeyPhrase();
+        var saltR = VaultCryptography.RandomSalt();
+        var kr = VaultCryptography.DeriveKey(recoveryPhrase, saltR);
+        var wR = VaultCryptography.Encrypt(_dataKey, kr);
+
+        _saltRecovery = saltR;
+        _wrappedRecovery = wR;
+
+        await PersistVaultV2Async(ct).ConfigureAwait(false);
+        StateChanged?.Invoke(this, EventArgs.Empty);
+        return recoveryPhrase;
+    }
+
     private async Task PersistVaultV2Async(CancellationToken ct)
     {
         if (_masterPassword == null || _dataKey == null || _saltMaster == null || _saltRecovery == null || _wrappedRecovery == null)
@@ -429,8 +449,29 @@ public sealed class VaultService
             .ToList();
     }
 
-    private static bool HostsMatch(string pageHost, string itemHost) =>
-        pageHost == itemHost
-        || pageHost.EndsWith("." + itemHost, StringComparison.Ordinal)
-        || itemHost.EndsWith("." + pageHost, StringComparison.Ordinal);
+    /// <summary>匹配时忽略前缀 www，减少「带 www 的条目 vs 子域登录页」漏配。</summary>
+    private static string CanonicalHostForMatch(string host)
+    {
+        var h = host.Trim().ToLowerInvariant();
+        return h.StartsWith("www.", StringComparison.Ordinal) ? h[4..] : h;
+    }
+
+    private static bool HostsMatch(string pageHost, string itemHost)
+    {
+        var p = CanonicalHostForMatch(pageHost);
+        var i = CanonicalHostForMatch(itemHost);
+        if (p == i) return true;
+        if (p.EndsWith("." + i, StringComparison.Ordinal) || i.EndsWith("." + p, StringComparison.Ordinal))
+            return true;
+        // m.site.com 与 www.site.com 等兄弟子域：取注册近似域（最后两段）比对
+        static string? ApproxRegistrable(string h)
+        {
+            var parts = h.Split('.', StringSplitOptions.RemoveEmptyEntries);
+            return parts.Length >= 2 ? $"{parts[^2]}.{parts[^1]}" : null;
+        }
+        var rp = ApproxRegistrable(p);
+        var ri = ApproxRegistrable(i);
+        if (rp != null && rp == ri) return true;
+        return false;
+    }
 }

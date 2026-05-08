@@ -4,7 +4,7 @@ using KeyNestForWin.Services;
 
 namespace KeyNestForWin;
 
-public partial class App : Application
+public partial class App : System.Windows.Application
 {
     public static VaultService Vault { get; } = new();
     public static LocalBridgeServer Bridge { get; } = new(Vault);
@@ -18,7 +18,7 @@ public partial class App : Application
         {
             Visible = true,
             Text = "KeyNest",
-            Icon = System.Drawing.SystemIcons.Application
+            Icon = AppBranding.LoadTrayIcon() ?? System.Drawing.SystemIcons.Application
         };
         tray.ContextMenuStrip = new Forms.ContextMenuStrip();
         tray.ContextMenuStrip.Items.Add("打开主窗口", null, (_, _) => ShowMainWindow());
@@ -43,6 +43,8 @@ public partial class App : Application
     {
         if (MainWindow != null)
         {
+            if (MainWindow is MainWindow mw)
+                mw.RefreshUi();
             MainWindow.Show();
             MainWindow.WindowState = WindowState.Normal;
             MainWindow.Activate();
