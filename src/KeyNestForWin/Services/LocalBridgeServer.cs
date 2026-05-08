@@ -145,6 +145,11 @@ public sealed class LocalBridgeServer : IDisposable
                 }
                 var title = payload.Title.Trim();
                 var urlStr = payload.Url.Trim();
+                if (_vault.ShouldSkipBridgeSave(urlStr, payload.Username, payload.Password))
+                {
+                    WriteJson(res, 200, """{"ok":true,"unchanged":true}""");
+                    return;
+                }
                 var displayTitle = string.IsNullOrEmpty(title)
                     ? (Uri.TryCreate(urlStr, UriKind.Absolute, out var u) ? u.Host : "未命名")
                     : title;

@@ -52,7 +52,7 @@
                 <DataGrid.Columns>
                     <DataGridTextColumn Header="标题" Binding="{Binding Title}" Width="*"/>
                     <DataGridTextColumn Header="用户名" Binding="{Binding Username}" Width="140"/>
-                    <DataGridTextColumn Header="网站 URL" Binding="{Binding Url}" Width="2*"/>
+                    <DataGridTextColumn Header="网站" Binding="{Binding Url}" Width="2*"/>
                 </DataGrid.Columns>
             </DataGrid>
             <DockPanel Grid.Row="2" Margin="12,8">

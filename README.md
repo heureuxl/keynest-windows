@@ -7,6 +7,7 @@
 - 主密码解锁 / 新建保管库；**恢复密钥**重置主密码（与 macOS v2 保管库一致）。
 - **PBKDF2-SHA256（310000 轮）+ AES-GCM**，与 Swift 版 `VaultCrypto` 对齐。
 - 条目列表（标题 / 用户名 / URL）；添加、编辑、删除。
+- **Chrome 扩展源码**：与本仓库根目录 `browser/chrome-extension` 内 macOS 版保持一致（可从 Windows 仓库打包 zip/crx 安装）；自动填充、提交保存时的去重与密码变更提示等行为与 macOS 同源脚本一致。
 - **本机 HTTP 桥** `127.0.0.1:17373`：`GET /api/credentials?url=`、`POST /api/save`，与现有 Chrome 扩展协议一致。
 - **系统托盘**：关闭窗口后驻留托盘；托盘可打开窗口、锁定、退出。
 - 保管库路径：`%AppData%\KeyNest\vault.keynest`；若检测到旧路径 `%AppData%\TwoPassword\vault.twopw` 且新文件不存在，会尝试复制迁移。

@@ -228,7 +228,8 @@ public sealed class VaultService
     {
         if (_masterPassword == null || _dataKey == null || _saltMaster == null || _saltRecovery == null || _wrappedRecovery == null)
             throw new InvalidOperationException("保管库未解锁");
-        EnforceMaxAccountsPerSiteUrl();
+        DedupeSameHostSameUsername();
+        EnforceMaxAccountsPerSiteHost();
         var km = VaultCryptography.DeriveKey(_masterPassword, _saltMaster);
         var wM = VaultCryptography.Encrypt(_dataKey, km);
         var list = Items.ToList();
@@ -247,14 +248,45 @@ public sealed class VaultService
         await File.WriteAllBytesAsync(VaultPath, JsonSerializer.SerializeToUtf8Bytes(outer, JsonOptions), ct).ConfigureAwait(false);
     }
 
-    private void EnforceMaxAccountsPerSiteUrl()
+    /// <summary>合并重复条目：同一主机 + 同一用户名只保留最后一次（仅有 URL 主机时参与）。</summary>
+    private void DedupeSameHostSameUsername()
+    {
+        var snapshot = Items.ToList();
+        var keyToLastIndex = new Dictionary<string, int>();
+        for (var i = 0; i < snapshot.Count; i++)
+        {
+            var hk = NormalizedSiteHostKey(snapshot[i].Url);
+            if (hk == null) continue;
+            var uk = NormalizeUsernameKey(snapshot[i].Username);
+            var key = hk + "\u001f" + uk;
+            keyToLastIndex[key] = i;
+        }
+        var removeIds = new HashSet<Guid>();
+        for (var i = 0; i < snapshot.Count; i++)
+        {
+            var hk = NormalizedSiteHostKey(snapshot[i].Url);
+            if (hk == null) continue;
+            var uk = NormalizeUsernameKey(snapshot[i].Username);
+            var key = hk + "\u001f" + uk;
+            if (keyToLastIndex.TryGetValue(key, out var keepIdx) && keepIdx != i)
+                removeIds.Add(snapshot[i].Id);
+        }
+        foreach (var id in removeIds)
+        {
+            var found = Items.FirstOrDefault(x => x.Id == id);
+            if (found != null)
+                Items.Remove(found);
+        }
+    }
+
+    private void EnforceMaxAccountsPerSiteHost()
     {
         var snapshot = Items.ToList();
         var groups = new Dictionary<string, List<PasswordItemDto>>();
         var keyOrder = new List<string>();
         foreach (var it in snapshot)
         {
-            var k = NormalizedSiteUrlKey(it.Url);
+            var k = NormalizedSiteHostKey(it.Url);
             if (k == null) continue;
             if (!groups.ContainsKey(k)) keyOrder.Add(k);
             if (!groups.TryGetValue(k, out var g))
@@ -280,7 +312,7 @@ public sealed class VaultService
         }
         foreach (var it in snapshot)
         {
-            if (NormalizedSiteUrlKey(it.Url) == null) keep.Add(it.Id);
+            if (NormalizedSiteHostKey(it.Url) == null) keep.Add(it.Id);
         }
         var remove = Items.Where(x => !keep.Contains(x.Id)).ToList();
         foreach (var r in remove)
@@ -290,46 +322,42 @@ public sealed class VaultService
     private static string NormalizeUsernameKey(string username) =>
         username.Trim().ToLowerInvariant();
 
-    public static string? NormalizedSiteUrlKey(string raw)
+    /// <summary>站点分组与页面匹配：仅主机名（域名或 IP，小写），不含路径、查询与端口。</summary>
+    public static string? NormalizedSiteHostKey(string raw)
     {
         var t = raw.Trim();
         if (string.IsNullOrEmpty(t)) return null;
         var s = t.Contains("://", StringComparison.Ordinal) ? t : "https://" + t;
         if (!Uri.TryCreate(s, UriKind.Absolute, out var uri) || string.IsNullOrEmpty(uri.Host))
-            return t.ToLowerInvariant();
-        var scheme = string.IsNullOrEmpty(uri.Scheme) ? "https" : uri.Scheme.ToLowerInvariant();
-        var host = uri.Host.ToLowerInvariant();
-        var path = uri.AbsolutePath;
-        if (path.Length > 1 && path.EndsWith('/'))
-            path = path[..^1];
-        return $"{scheme}://{host}{path}";
+            return null;
+        return uri.Host.ToLowerInvariant();
     }
 
-    /// <summary>Chrome 扩展保存：按 URL+用户名合并；新建条目请使用 <see cref="UpsertItemAsync"/>。</summary>
+    /// <summary>Chrome 扩展保存：按主机名+用户名合并；新建条目请使用 <see cref="UpsertItemAsync"/>。</summary>
     public async Task AddOrUpdateItemAsync(PasswordItemDto item, CancellationToken ct = default)
     {
-        await MergeIncomingBySiteUrlAsync(item, ct).ConfigureAwait(false);
+        await MergeIncomingBySiteHostAsync(item, ct).ConfigureAwait(false);
     }
 
-    /// <summary>界面新建/编辑：若 Id 已存在则整行替换，否则按 URL 规则合并。</summary>
+    /// <summary>界面新建/编辑：若 Id 已存在则整行替换，否则按主机名规则合并。</summary>
     public async Task UpsertItemAsync(PasswordItemDto item, CancellationToken ct = default)
     {
         for (var i = 0; i < Items.Count; i++)
         {
             if (Items[i].Id != item.Id) continue;
             Items[i] = item;
-            EnforceMaxAccountsPerSiteUrl();
+            EnforceMaxAccountsPerSiteHost();
             await PersistVaultV2Async(ct).ConfigureAwait(false);
             StateChanged?.Invoke(this, EventArgs.Empty);
             return;
         }
-        await MergeIncomingBySiteUrlAsync(item, ct).ConfigureAwait(false);
+        await MergeIncomingBySiteHostAsync(item, ct).ConfigureAwait(false);
     }
 
-    private async Task MergeIncomingBySiteUrlAsync(PasswordItemDto item, CancellationToken ct)
+    private async Task MergeIncomingBySiteHostAsync(PasswordItemDto item, CancellationToken ct)
     {
-        var urlKey = NormalizedSiteUrlKey(item.Url);
-        if (urlKey == null)
+        var hostKey = NormalizedSiteHostKey(item.Url);
+        if (hostKey == null)
         {
             Items.Add(item);
             await PersistVaultV2Async(ct).ConfigureAwait(false);
@@ -337,7 +365,7 @@ public sealed class VaultService
             return;
         }
         var userKey = NormalizeUsernameKey(item.Username);
-        var group = Items.Where(x => NormalizedSiteUrlKey(x.Url) == urlKey).ToList();
+        var group = Items.Where(x => NormalizedSiteHostKey(x.Url) == hostKey).ToList();
         var hit = group.FirstOrDefault(x => NormalizeUsernameKey(x.Username) == userKey);
         if (hit != null)
         {
@@ -354,7 +382,7 @@ public sealed class VaultService
             if (group.Count >= 3)
             {
                 var oldest = Items.Select((x, idx) => (x, idx))
-                    .Where(t => NormalizedSiteUrlKey(t.x.Url) == urlKey)
+                    .Where(t => NormalizedSiteHostKey(t.x.Url) == hostKey)
                     .OrderBy(t => t.idx).FirstOrDefault();
                 if (oldest.x != null)
                     Items.Remove(oldest.x);
@@ -373,26 +401,36 @@ public sealed class VaultService
         StateChanged?.Invoke(this, EventArgs.Empty);
     }
 
+    /// <summary>浏览器扩展 POST /api/save：同一页 + 用户名已存在且密码一致时可跳过写入。</summary>
+    public bool ShouldSkipBridgeSave(string pageUrl, string username, string password)
+    {
+        var uk = NormalizeUsernameKey(username);
+        foreach (var item in MatchCredentialsForPage(pageUrl))
+        {
+            if (NormalizeUsernameKey(item.Username) != uk) continue;
+            return item.Password == password;
+        }
+        return false;
+    }
+
     public IReadOnlyList<PasswordItemDto> MatchCredentialsForPage(string pageUrl)
     {
         if (!IsUnlocked) return Array.Empty<PasswordItemDto>();
-        if (NormalizedSiteUrlKey(pageUrl) is { } pageKey)
-        {
-            var exact = Items.Where(x => NormalizedSiteUrlKey(x.Url) == pageKey)
-                .OrderBy(x => x.Username, StringComparer.OrdinalIgnoreCase).ToList();
-            if (exact.Count > 0) return exact;
-        }
-        if (!Uri.TryCreate(pageUrl, UriKind.Absolute, out var pageUri))
+        if (NormalizedSiteHostKey(pageUrl) is not { } pageHost)
             return Array.Empty<PasswordItemDto>();
-        var host = pageUri.Host.ToLowerInvariant();
-        return Items.Where(item =>
+        return Items
+            .Where(item =>
             {
                 if (string.IsNullOrEmpty(item.Url)) return false;
-                if (!Uri.TryCreate(item.Url, UriKind.Absolute, out var u)) return false;
-                var h = u.Host.ToLowerInvariant();
-                return host == h || host.EndsWith("." + h, StringComparison.Ordinal) || h.EndsWith("." + host, StringComparison.Ordinal);
+                if (NormalizedSiteHostKey(item.Url) is not { } itemHost) return false;
+                return HostsMatch(pageHost, itemHost);
             })
             .OrderBy(x => x.Username, StringComparer.OrdinalIgnoreCase)
             .ToList();
     }
+
+    private static bool HostsMatch(string pageHost, string itemHost) =>
+        pageHost == itemHost
+        || pageHost.EndsWith("." + itemHost, StringComparison.Ordinal)
+        || itemHost.EndsWith("." + pageHost, StringComparison.Ordinal);
 }

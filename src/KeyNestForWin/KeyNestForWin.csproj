@@ -11,6 +11,6 @@
     <ApplicationManifest>app.manifest</ApplicationManifest>
     <Title>KeyNest</Title>
     <Product>KeyNest for Windows</Product>
-    <Version>0.1.0</Version>
+    <Version>0.2.9</Version>
   </PropertyGroup>
 </Project>
