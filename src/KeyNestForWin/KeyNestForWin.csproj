@@ -18,4 +18,10 @@
   <ItemGroup>
     <Resource Include="Assets\app.ico" />
   </ItemGroup>
+
+  <ItemGroup>
+    <Page Update="Themes\FluentTheme.xaml">
+      <Generator>MSBuild:Compile</Generator>
+    </Page>
+  </ItemGroup>
 </Project>

@@ -8,7 +8,8 @@ namespace KeyNestForWin;
 
 public partial class App : System.Windows.Application
 {
-    public static VaultService Vault { get; } = new();
+    public static AppSettingsStore Settings { get; } = new();
+    public static VaultService Vault { get; } = new(Settings);
     public static EntryUsageStore Usage { get; } = new();
     public static LocalBridgeServer Bridge { get; } = new(Vault);
 

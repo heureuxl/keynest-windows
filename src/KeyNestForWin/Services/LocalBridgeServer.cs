@@ -163,7 +163,7 @@ public sealed class LocalBridgeServer : IDisposable
                     Url = urlStr,
                     Notes = ""
                 };
-                _vault.AddOrUpdateItemAsync(item).GetAwaiter().GetResult();
+                _vault.AddOrUpdateItemAsync(item, urlStr).GetAwaiter().GetResult();
                 WriteJson(res, 200, """{"ok":true}""");
                 return;
             }

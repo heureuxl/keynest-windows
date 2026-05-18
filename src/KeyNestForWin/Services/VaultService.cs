@@ -25,6 +25,8 @@ public sealed class VaultService
 
     public string VaultPath { get; }
 
+    private readonly AppSettingsStore _settings;
+
     private string? _masterPassword;
     private byte[]? _dataKey;
     private byte[]? _saltMaster;
@@ -37,8 +39,9 @@ public sealed class VaultService
 
     public event EventHandler? StateChanged;
 
-    public VaultService()
+    public VaultService(AppSettingsStore settings)
     {
+        _settings = settings;
         var appData = Environment.GetFolderPath(Environment.SpecialFolder.ApplicationData);
         var dir = Path.Combine(appData, "KeyNest");
         Directory.CreateDirectory(dir);
@@ -102,7 +105,7 @@ public sealed class VaultService
                     _saltRecovery = outer.SaltRecovery;
                     _wrappedRecovery = outer.WrappedDataKeyRecovery;
                     Items.Clear();
-                    foreach (var i in payload.Items.OrderBy(x => x.Title))
+                    foreach (var i in payload.Items)
                         Items.Add(i);
                 }
             }
@@ -269,25 +272,37 @@ public sealed class VaultService
     }
 
     /// <summary>合并重复条目：同一主机 + 同一用户名只保留最后一次（仅有 URL 主机时参与）。</summary>
+    private string? SiteIdentityKey(PasswordItemDto item) =>
+        SiteIdentityService.GetIdentityKey(item.Url, item.SiteEndpoint, _settings.DistinguishHostsByIp);
+
+    private void ApplyAutoSiteEndpoint(PasswordItemDto item, string? pageUrl = null)
+    {
+        if (!_settings.DistinguishHostsByIp) return;
+        if (!string.IsNullOrWhiteSpace(item.SiteEndpoint)) return;
+        var resolved = SiteIdentityService.ResolveEndpointForUrl(pageUrl ?? item.Url);
+        if (!string.IsNullOrEmpty(resolved))
+            item.SiteEndpoint = resolved;
+    }
+
     private void DedupeSameHostSameUsername()
     {
         var snapshot = Items.ToList();
         var keyToLastIndex = new Dictionary<string, int>();
         for (var i = 0; i < snapshot.Count; i++)
         {
-            var hk = NormalizedSiteHostKey(snapshot[i].Url);
-            if (hk == null) continue;
+            var sk = SiteIdentityKey(snapshot[i]);
+            if (sk == null) continue;
             var uk = NormalizeUsernameKey(snapshot[i].Username);
-            var key = hk + "\u001f" + uk;
+            var key = sk + "\u001f" + uk;
             keyToLastIndex[key] = i;
         }
         var removeIds = new HashSet<Guid>();
         for (var i = 0; i < snapshot.Count; i++)
         {
-            var hk = NormalizedSiteHostKey(snapshot[i].Url);
-            if (hk == null) continue;
+            var sk = SiteIdentityKey(snapshot[i]);
+            if (sk == null) continue;
             var uk = NormalizeUsernameKey(snapshot[i].Username);
-            var key = hk + "\u001f" + uk;
+            var key = sk + "\u001f" + uk;
             if (keyToLastIndex.TryGetValue(key, out var keepIdx) && keepIdx != i)
                 removeIds.Add(snapshot[i].Id);
         }
@@ -306,7 +321,7 @@ public sealed class VaultService
         var keyOrder = new List<string>();
         foreach (var it in snapshot)
         {
-            var k = NormalizedSiteHostKey(it.Url);
+            var k = SiteIdentityKey(it);
             if (k == null) continue;
             if (!groups.ContainsKey(k)) keyOrder.Add(k);
             if (!groups.TryGetValue(k, out var g))
@@ -326,13 +341,13 @@ public sealed class VaultService
                 var uk = NormalizeUsernameKey(it.Username);
                 var idx = pick.FindIndex(x => NormalizeUsernameKey(x.Username) == uk);
                 if (idx >= 0) pick[idx] = it;
-                else if (pick.Count < 3) pick.Add(it);
+                else if (pick.Count < _settings.MaxAccountsPerSiteHost) pick.Add(it);
             }
             foreach (var p in pick) keep.Add(p.Id);
         }
         foreach (var it in snapshot)
         {
-            if (NormalizedSiteHostKey(it.Url) == null) keep.Add(it.Id);
+            if (SiteIdentityKey(it) == null) keep.Add(it.Id);
         }
         var remove = Items.Where(x => !keep.Contains(x.Id)).ToList();
         foreach (var r in remove)
@@ -353,15 +368,17 @@ public sealed class VaultService
         return uri.Host.ToLowerInvariant();
     }
 
-    /// <summary>Chrome 扩展保存：按主机名+用户名合并；新建条目请使用 <see cref="UpsertItemAsync"/>。</summary>
-    public async Task AddOrUpdateItemAsync(PasswordItemDto item, CancellationToken ct = default)
+    /// <summary>Chrome 扩展保存：按站点环境+用户名合并；<paramref name="pageUrl"/> 用于解析 hosts IP。</summary>
+    public async Task AddOrUpdateItemAsync(PasswordItemDto item, string? pageUrl = null, CancellationToken ct = default)
     {
+        ApplyAutoSiteEndpoint(item, pageUrl);
         await MergeIncomingBySiteHostAsync(item, ct).ConfigureAwait(false);
     }
 
     /// <summary>界面新建/编辑：若 Id 已存在则整行替换，否则按主机名规则合并。</summary>
     public async Task UpsertItemAsync(PasswordItemDto item, CancellationToken ct = default)
     {
+        ApplyAutoSiteEndpoint(item);
         for (var i = 0; i < Items.Count; i++)
         {
             if (Items[i].Id != item.Id) continue;
@@ -376,8 +393,8 @@ public sealed class VaultService
 
     private async Task MergeIncomingBySiteHostAsync(PasswordItemDto item, CancellationToken ct)
     {
-        var hostKey = NormalizedSiteHostKey(item.Url);
-        if (hostKey == null)
+        var siteKey = SiteIdentityKey(item);
+        if (siteKey == null)
         {
             Items.Add(item);
             await PersistVaultV2Async(ct).ConfigureAwait(false);
@@ -385,7 +402,7 @@ public sealed class VaultService
             return;
         }
         var userKey = NormalizeUsernameKey(item.Username);
-        var group = Items.Where(x => NormalizedSiteHostKey(x.Url) == hostKey).ToList();
+        var group = Items.Where(x => SiteIdentityKey(x) == siteKey).ToList();
         var hit = group.FirstOrDefault(x => NormalizeUsernameKey(x.Username) == userKey);
         if (hit != null)
         {
@@ -393,6 +410,7 @@ public sealed class VaultService
             hit.Username = item.Username;
             hit.Password = item.Password;
             hit.Url = item.Url;
+            hit.SiteEndpoint = item.SiteEndpoint;
             hit.Notes = item.Notes;
             if (item.CustomFields.Count > 0)
                 hit.CustomFields = item.CustomFields;
@@ -402,10 +420,10 @@ public sealed class VaultService
         }
         else
         {
-            if (group.Count >= 3)
+            if (group.Count >= _settings.MaxAccountsPerSiteHost)
             {
                 var oldest = Items.Select((x, idx) => (x, idx))
-                    .Where(t => NormalizedSiteHostKey(t.x.Url) == hostKey)
+                    .Where(t => SiteIdentityKey(t.x) == siteKey)
                     .OrderBy(t => t.idx).FirstOrDefault();
                 if (oldest.x != null)
                     Items.Remove(oldest.x);
@@ -434,6 +452,32 @@ public sealed class VaultService
     }
 
     /// <summary>同一主机 + 同一用户名仅保留一条（保留最后一次）。返回合并删除的条数。</summary>
+    /// <summary>按当前设置重新收紧每站点账号上限并落盘（设置变更后调用）。</summary>
+    public async Task EnforceLimitsAndPersistAsync(CancellationToken ct = default)
+    {
+        if (!IsUnlocked) return;
+        EnforceMaxAccountsPerSiteHost();
+        await PersistVaultV2Async(ct).ConfigureAwait(false);
+        StateChanged?.Invoke(this, EventArgs.Empty);
+    }
+
+    /// <summary>将条目移动到目标条目之前（保管库列表顺序）。</summary>
+    public async Task MoveItemBeforeAsync(Guid draggedId, Guid targetId, CancellationToken ct = default)
+    {
+        if (draggedId == targetId) return;
+        var dragged = Items.FirstOrDefault(x => x.Id == draggedId);
+        var target = Items.FirstOrDefault(x => x.Id == targetId);
+        if (dragged == null || target == null) return;
+        var from = Items.IndexOf(dragged);
+        var to = Items.IndexOf(target);
+        if (from < 0 || to < 0 || from == to) return;
+        Items.RemoveAt(from);
+        if (from < to) to--;
+        Items.Insert(to, dragged);
+        await PersistVaultV2Async(ct).ConfigureAwait(false);
+        StateChanged?.Invoke(this, EventArgs.Empty);
+    }
+
     public async Task<int> MergeDuplicateHostUsernamesAsync(CancellationToken ct = default)
     {
         var before = Items.Count;
@@ -459,14 +503,14 @@ public sealed class VaultService
     public IReadOnlyList<PasswordItemDto> MatchCredentialsForPage(string pageUrl)
     {
         if (!IsUnlocked) return Array.Empty<PasswordItemDto>();
-        if (NormalizedSiteHostKey(pageUrl) is not { } pageHost)
+        if (NormalizedSiteHostKey(pageUrl) is null)
             return Array.Empty<PasswordItemDto>();
         return Items
             .Where(item =>
             {
                 if (string.IsNullOrEmpty(item.Url)) return false;
-                if (NormalizedSiteHostKey(item.Url) is not { } itemHost) return false;
-                return HostsMatch(pageHost, itemHost);
+                return SiteIdentityService.ContextsMatch(
+                    pageUrl, item.Url, item.SiteEndpoint, _settings.DistinguishHostsByIp, HostsMatch);
             })
             .OrderBy(x => x.Username, StringComparer.OrdinalIgnoreCase)
             .ToList();

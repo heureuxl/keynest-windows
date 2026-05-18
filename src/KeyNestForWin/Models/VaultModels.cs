@@ -36,6 +36,8 @@ public sealed class PasswordItemDto
     public string Username { get; set; } = "";
     public string Password { get; set; } = "";
     public string Url { get; set; } = "";
+    /// <summary>绑定解析 IP（hosts/DNS），同一域名不同环境独立存储；空表示不区分 IP。</summary>
+    public string? SiteEndpoint { get; set; }
     public string Notes { get; set; } = "";
     public List<CustomFieldDto> CustomFields { get; set; } = new();
     public bool IsFavorite { get; set; }
@@ -66,6 +68,6 @@ public sealed class VaultListRow
     public string HostGroupKey { get; init; } = "";
     public string HostGroupTitle { get; init; } = "";
     public bool IsFavorite { get; init; }
-    public string FavoriteMark => IsFavorite ? "★" : "";
+    public string FavoriteMark => IsFavorite ? "★" : "☆";
     public PasswordItemDto Source { get; init; } = null!;
 }
