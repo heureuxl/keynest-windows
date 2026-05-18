@@ -394,6 +394,9 @@ public sealed class VaultService
             hit.Password = item.Password;
             hit.Url = item.Url;
             hit.Notes = item.Notes;
+            if (item.CustomFields.Count > 0)
+                hit.CustomFields = item.CustomFields;
+            hit.IsFavorite = item.IsFavorite;
             foreach (var dup in group.Where(x => x.Id != hit.Id && NormalizeUsernameKey(x.Username) == userKey).ToList())
                 Items.Remove(dup);
         }
@@ -419,6 +422,26 @@ public sealed class VaultService
         if (found != null) Items.Remove(found);
         await PersistVaultV2Async(ct).ConfigureAwait(false);
         StateChanged?.Invoke(this, EventArgs.Empty);
+    }
+
+    public async Task ToggleFavoriteAsync(Guid id, CancellationToken ct = default)
+    {
+        var found = Items.FirstOrDefault(x => x.Id == id);
+        if (found == null) return;
+        found.IsFavorite = !found.IsFavorite;
+        await PersistVaultV2Async(ct).ConfigureAwait(false);
+        StateChanged?.Invoke(this, EventArgs.Empty);
+    }
+
+    /// <summary>同一主机 + 同一用户名仅保留一条（保留最后一次）。返回合并删除的条数。</summary>
+    public async Task<int> MergeDuplicateHostUsernamesAsync(CancellationToken ct = default)
+    {
+        var before = Items.Count;
+        DedupeSameHostSameUsername();
+        if (Items.Count == before) return 0;
+        await PersistVaultV2Async(ct).ConfigureAwait(false);
+        StateChanged?.Invoke(this, EventArgs.Empty);
+        return before - Items.Count;
     }
 
     /// <summary>浏览器扩展 POST /api/save：同一页 + 用户名已存在且密码一致时可跳过写入。</summary>

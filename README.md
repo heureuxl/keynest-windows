@@ -1,56 +1,71 @@
 # KeyNest for Windows
 
-面向 **Windows 10 / 11** 的 KeyNest 桌面客户端（**.NET 8 + WPF**），与 macOS 版共用同一保管库文件格式（`vault.keynest`），便于复制文件后在两台机器上使用同一数据库。
+面向 **Windows 10 / 11（x64）** 的 KeyNest 桌面客户端（**.NET 8 + WPF**），与 macOS 版共用同一保管库文件格式（`vault.keynest`），便于复制文件后在两台机器上使用同一数据库。
 
-## 功能（首版）
+> 当前版本：**0.4.2**（与 macOS 版功能对齐）
 
-- 主密码解锁 / 新建保管库；**恢复密钥**重置主密码（与 macOS v2 保管库一致）。
-- **PBKDF2-SHA256（310000 轮）+ AES-GCM**，与 Swift 版 `VaultCrypto` 对齐。
-- 条目列表（标题 / 用户名 / URL）；添加、编辑、删除。
-- **Chrome 扩展源码**：与本仓库根目录 `browser/chrome-extension` 内 macOS 版保持一致（可从 Windows 仓库打包 zip/crx 安装）；自动填充、提交保存时的去重与密码变更提示等行为与 macOS 同源脚本一致。
-- **本机 HTTP 桥** `127.0.0.1:17373`：`GET /api/credentials?url=`、`POST /api/save`，与现有 Chrome 扩展协议一致。
-- **系统托盘**：关闭窗口后驻留托盘；托盘可打开窗口、锁定、退出。
-- 保管库路径：`%AppData%\KeyNest\vault.keynest`；若检测到旧路径 `%AppData%\TwoPassword\vault.twopw` 且新文件不存在，会尝试复制迁移。
+维护者：**heureuxl** · [lq_17395@163.com](mailto:lq_17395@163.com)
 
-## 构建要求
+## 功能概览
 
-- [**.NET 8 SDK**](https://dotnet.microsoft.com/download/dotnet/8.0)（Windows x64）
-- Visual Studio 2022（工作负载：**.NET 桌面开发**）或 Visual Studio Build Tools + Windows SDK
+- **本地加密保管库**：`%AppData%\KeyNest\vault.keynest`（若检测到旧版 `%AppData%\TwoPassword\vault.twopw` 且新文件不存在，会尝试复制迁移）。
+- **主密码**解锁 / 新建；**恢复密钥**重置主密码（v2 格式，与 macOS 一致）；解锁后可**更换恢复密钥**。
+- **条目管理**：模糊搜索（标题、用户名、网站、备注、自定义字段）；筛选（全部 / 收藏 / 最近使用 / 空密码 / 弱密码）；列表或**按域名分组**；详情面板显示/复制密码、弱密码提示。
+- **自定义字段**：银行卡、API Key、密保问答等；**收藏**置顶。
+- **整理**：合并重复（同站点同用户名仅保留最新一条）。
+- **本机 HTTP 桥** `127.0.0.1:17373`：`GET /api/credentials?url=`、`POST /api/save`（密码未变返回 `unchanged`）；仅解锁且开启桥接时监听。
+- **浏览器扩展**：`browser/chrome-extension`（Chrome）、`browser/edge-extension`（Edge）；自动填充、提交保存、明文密码记忆（避免站点加密串入库）、密码不一致提示同会话仅一次。
+- **系统托盘** + **单实例**：关闭窗口后驻留托盘；重复启动会激活已有窗口。
+- **站点规则**：同一主机（域名或 IP，不含路径与端口）最多 **3 个不同用户名**；相同主机 + 用户名则覆盖；子域与根域可按包含关系匹配。
 
-在仓库根目录执行：
+## 系统要求
+
+- Windows **10 / 11**，x64
+- 运行发布包**无需**单独安装 .NET 运行时（自包含单文件）
+- 从源码构建需 [.NET 8 SDK](https://dotnet.microsoft.com/download/dotnet/8.0) 与 **.NET 桌面开发**工作负载
+
+## 从源码构建
 
 ```bat
 dotnet restore KeyNestForWin.sln
 dotnet build KeyNestForWin.sln -c Release
 ```
 
-输出程序：`src\KeyNestForWin\bin\Release\net8.0-windows\KeyNestForWin.exe`
+输出：`src\KeyNestForWin\bin\Release\net8.0-windows\KeyNestForWin.exe`
 
-### 打包 Windows 分发版（绿色 / 单 exe）
+## 打包与发版
 
-**必须在已安装 .NET 8 SDK 的 Windows（x64）上执行**；`net8.0-windows` + WPF 在 macOS/Linux 上通常无法可靠发布 Windows 目标。
-
-在仓库根目录任选其一：
+**必须在 Windows x64 上执行**（WPF 目标）。
 
 ```bat
 scripts\publish-release.bat
 ```
 
+或 PowerShell：
+
 ```powershell
 .\scripts\publish-release.ps1
 ```
 
-产物目录：`dist\KeyNest-Windows-Release\`，主程序为 **`KeyNestForWin.exe`**（自包含单文件，可将整个文件夹打成 zip 分给其他 Win10/11 x64 电脑）。
+产物目录 `dist\`：
 
-等价命令（脚本内部即为此参数）：
+| 路径 | 说明 |
+|------|------|
+| `KeyNest-Windows-Release\KeyNestForWin.exe` | 自包含单文件主程序 |
+| `KeyNest-Chrome.zip` / `KeyNest-Edge.zip` | 浏览器扩展（解压后「加载已解压的扩展程序」） |
+| `Chrome扩展安装说明.txt` / `Edge扩展安装说明.txt` | 安装步骤 |
+| `KeyNest-Windows-<版本>-win-x64.zip` | 上述内容的一键分发包 |
 
-```bat
-dotnet publish src\KeyNestForWin\KeyNestForWin.csproj -c Release -o dist\KeyNest-Windows-Release -r win-x64 --self-contained true /p:PublishSingleFile=true /p:IncludeNativeLibrariesForSelfExtract=true /p:EnableCompressionInSingleFile=true
-```
+## 浏览器扩展安装
+
+1. 解压 `KeyNest-Chrome.zip` 或 `KeyNest-Edge.zip`，得到 **KeyNest** 文件夹。
+2. Chrome：`chrome://extensions` → 开发者模式 → **加载已解压的扩展程序** → 选中该文件夹。  
+   Edge：`edge://extensions` → 开发人员模式 → **加载解压缩的扩展**。
+3. 打开 KeyNest 桌面端并解锁，勾选底部「允许浏览器扩展连接本机端口 17373」。
 
 ## HttpListener 与端口
 
-若启动桥接时提示 **拒绝访问** 或无法监听 `127.0.0.1:17373`，可在**管理员**命令提示符执行（仅需一次）：
+若启动桥接时提示**拒绝访问**，可在**管理员**命令提示符执行（仅需一次）：
 
 ```bat
 netsh http add urlacl url=http://127.0.0.1:17373/ user=%USERNAME%
@@ -58,19 +73,16 @@ netsh http add urlacl url=http://127.0.0.1:17373/ user=%USERNAME%
 
 ## 与 macOS 的差异
 
-- 无原生菜单栏图标（Windows 使用托盘）。
-- **应用与托盘图标**：见工程 `Assets/app.ico` 与 `ApplicationIcon` 配置。
-- UI 为简化版；后续可继续对齐 macOS 详情布局与版本号策略。
+- 无 Safari / Firefox 扩展打包脚本（Windows 仓库提供 Chrome + Edge）；Firefox 可尝试加载 Chrome 包，未单独测试。
+- UI 为 WPF 实现，交互与 macOS SwiftUI 版等价但布局略有不同。
 
 ## 规范与许可
 
 | 文档 | 说明 |
 |------|------|
-| [LICENSE](LICENSE) | **MIT License** — 使用与再发布条件见文件全文。 |
-| [CONTRIBUTING.md](CONTRIBUTING.md) | 参与贡献的流程与约定。 |
-| [SECURITY.md](SECURITY.md) | 安全漏洞报告方式与范围。 |
-| [CODE_OF_CONDUCT.md](CODE_OF_CONDUCT.md) | 社区行为准则（Contributor Covenant 2.1 改编）。 |
+| [LICENSE](LICENSE) | **MIT License** |
+| [CONTRIBUTING.md](CONTRIBUTING.md) | 贡献指南 |
+| [SECURITY.md](SECURITY.md) | 安全报告 |
+| [CODE_OF_CONDUCT.md](CODE_OF_CONDUCT.md) | 行为准则 |
 
 **版权**：Copyright (c) 2026 [heureuxl](mailto:lq_17395@163.com)
-
-若为主仓库 **KeyNest** 的 monorepo，仍以该仓库根目录 **LICENSE** 为准；本文件为 Windows 客户端仓库内同步说明。

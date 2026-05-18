@@ -9,6 +9,7 @@ namespace KeyNestForWin;
 public partial class App : System.Windows.Application
 {
     public static VaultService Vault { get; } = new();
+    public static EntryUsageStore Usage { get; } = new();
     public static LocalBridgeServer Bridge { get; } = new(Vault);
 
     private Forms.NotifyIcon? _tray;

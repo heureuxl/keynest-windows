@@ -22,6 +22,13 @@ public sealed class VaultPayloadDto
     public List<PasswordItemDto> Items { get; set; } = new();
 }
 
+public sealed class CustomFieldDto
+{
+    public Guid Id { get; set; } = Guid.NewGuid();
+    public string Label { get; set; } = "";
+    public string Value { get; set; } = "";
+}
+
 public sealed class PasswordItemDto
 {
     public Guid Id { get; set; }
@@ -30,6 +37,8 @@ public sealed class PasswordItemDto
     public string Password { get; set; } = "";
     public string Url { get; set; } = "";
     public string Notes { get; set; } = "";
+    public List<CustomFieldDto> CustomFields { get; set; } = new();
+    public bool IsFavorite { get; set; }
 }
 
 public sealed class BridgeCredentialDto
@@ -45,4 +54,18 @@ public sealed class BridgeSavePayloadDto
     public string Url { get; set; } = "";
     public string Username { get; set; } = "";
     public string Password { get; set; } = "";
+}
+
+/// <summary>主界面列表行（含分组键）。</summary>
+public sealed class VaultListRow
+{
+    public Guid Id { get; init; }
+    public string Title { get; init; } = "";
+    public string Username { get; init; } = "";
+    public string SiteHost { get; init; } = "";
+    public string HostGroupKey { get; init; } = "";
+    public string HostGroupTitle { get; init; } = "";
+    public bool IsFavorite { get; init; }
+    public string FavoriteMark => IsFavorite ? "★" : "";
+    public PasswordItemDto Source { get; init; } = null!;
 }

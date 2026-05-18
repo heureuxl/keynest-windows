@@ -1,5 +1,8 @@
+using System.ComponentModel;
 using System.Windows;
 using System.Windows.Controls;
+using System.Windows.Data;
+using System.Windows.Input;
 using KeyNestForWin.Models;
 using KeyNestForWin.Services;
 
@@ -7,12 +10,46 @@ namespace KeyNestForWin;
 
 public partial class MainWindow : Window
 {
+    private enum VaultListFilter { All, Favorites, Recent, EmptyPassword, WeakPassword }
+    private enum VaultListLayout { Flat, ByHost }
+
+    private VaultListFilter _listFilter = VaultListFilter.All;
+    private VaultListLayout _layoutMode = VaultListLayout.Flat;
+    private Guid? _selectedId;
+    private bool _detailPasswordRevealed;
+    private CollectionViewSource? _itemsView;
+
     public MainWindow()
     {
         InitializeComponent();
         AppBranding.SetWindowIcon(this);
+        InitFilterCombos();
         Loaded += (_, _) => RefreshUi();
         App.Vault.StateChanged += (_, _) => Dispatcher.Invoke(RefreshUi);
+    }
+
+    private void InitFilterCombos()
+    {
+        FilterCombo.ItemsSource = new[]
+        {
+            new ComboItem("全部", VaultListFilter.All),
+            new ComboItem("收藏", VaultListFilter.Favorites),
+            new ComboItem("最近使用", VaultListFilter.Recent),
+            new ComboItem("空密码", VaultListFilter.EmptyPassword),
+            new ComboItem("弱密码", VaultListFilter.WeakPassword),
+        };
+        FilterCombo.DisplayMemberPath = "Label";
+        FilterCombo.SelectedValuePath = "Value";
+        FilterCombo.SelectedIndex = 0;
+
+        LayoutCombo.ItemsSource = new[]
+        {
+            new ComboItem("列表", VaultListLayout.Flat),
+            new ComboItem("按域名分组", VaultListLayout.ByHost),
+        };
+        LayoutCombo.DisplayMemberPath = "Label";
+        LayoutCombo.SelectedValuePath = "Value";
+        LayoutCombo.SelectedIndex = 0;
     }
 
     public void RefreshUi()
@@ -22,8 +59,8 @@ public partial class MainWindow : Window
         {
             LockPanel.Visibility = Visibility.Collapsed;
             MainPanel.Visibility = Visibility.Visible;
-            ItemsGrid.ItemsSource = v.Items;
-            ItemsGrid.Items.Refresh();
+            App.Usage.Prune(v.Items.Select(x => x.Id).ToHashSet());
+            RefreshItemList();
             LockHint.Text = v.VaultExists ? "输入主密码以解锁保管库。" : "";
         }
         else
@@ -39,6 +76,290 @@ public partial class MainWindow : Window
             App.Bridge.Start();
         else
             App.Bridge.Stop();
+    }
+
+    private void RefreshItemList()
+    {
+        var v = App.Vault;
+        var tokens = PasswordItemSearch.SplitSearchTokens(SearchBox?.Text ?? "");
+
+        IEnumerable<PasswordItemDto> list = _listFilter switch
+        {
+            VaultListFilter.Favorites => v.Items.Where(x => x.IsFavorite),
+            VaultListFilter.Recent => v.Items,
+            VaultListFilter.EmptyPassword => v.Items.Where(x => string.IsNullOrEmpty(x.Password)),
+            VaultListFilter.WeakPassword => v.Items.Where(x => PasswordStrength.IsWeak(x.Password)),
+            _ => v.Items.AsEnumerable()
+        };
+
+        if (tokens.Count > 0)
+            list = list.Where(x => PasswordItemSearch.MatchesSearchTokens(x, tokens));
+
+        List<PasswordItemDto> sorted;
+        if (_listFilter == VaultListFilter.Recent)
+        {
+            var order = App.Usage.SortIdsByRecentFirst(list.Select(x => x.Id).ToList());
+            var map = list.ToDictionary(x => x.Id);
+            sorted = order.Where(map.ContainsKey).Select(id => map[id]).ToList();
+        }
+        else
+        {
+            sorted = list.OrderByDescending(x => x.IsFavorite)
+                .ThenBy(x => x.Title, StringComparer.OrdinalIgnoreCase)
+                .ToList();
+        }
+
+        var rows = sorted.Select(ToListRow).ToList();
+        _itemsView = new CollectionViewSource { Source = rows };
+        if (_layoutMode == VaultListLayout.ByHost)
+            _itemsView.GroupDescriptions.Add(new PropertyGroupDescription(nameof(VaultListRow.HostGroupTitle)));
+        ItemsList.ItemsSource = _itemsView.View;
+
+        FilterCaption.Text = _listFilter switch
+        {
+            VaultListFilter.Favorites => $"收藏 {rows.Count} 条",
+            VaultListFilter.Recent => $"按最近打开/复制排序 · {rows.Count} 条",
+            VaultListFilter.EmptyPassword => $"密码为空的条目 · {rows.Count} 条",
+            VaultListFilter.WeakPassword => $"本地规则判定为弱密码 · {rows.Count} 条",
+            _ => $"共 {rows.Count} 条"
+        };
+
+        EnsureSelectionValid(rows);
+        UpdateDetailPanel();
+    }
+
+    private static VaultListRow ToListRow(PasswordItemDto item)
+    {
+        var hostKey = VaultService.NormalizedSiteHostKey(item.Url) ?? "__none__";
+        var site = SidebarSiteAddress(item);
+        return new VaultListRow
+        {
+            Id = item.Id,
+            Title = string.IsNullOrEmpty(item.Title) ? "未命名" : item.Title,
+            Username = item.Username,
+            SiteHost = site,
+            HostGroupKey = hostKey,
+            HostGroupTitle = hostKey == "__none__" ? "无网站" : hostKey,
+            IsFavorite = item.IsFavorite,
+            Source = item
+        };
+    }
+
+    private static string SidebarSiteAddress(PasswordItemDto item)
+    {
+        var trimmed = item.Url.Trim();
+        if (string.IsNullOrEmpty(trimmed)) return "";
+        var s = trimmed.Contains("://", StringComparison.Ordinal) ? trimmed : "https://" + trimmed;
+        if (Uri.TryCreate(s, UriKind.Absolute, out var uri) && !string.IsNullOrEmpty(uri.Host))
+            return uri.Host;
+        return trimmed;
+    }
+
+    private void EnsureSelectionValid(IReadOnlyList<VaultListRow> rows)
+    {
+        var ids = rows.Select(r => r.Id).ToHashSet();
+        if (_selectedId is { } sid && ids.Contains(sid))
+        {
+            SelectRowById(sid);
+            return;
+        }
+        _selectedId = rows.FirstOrDefault()?.Id;
+        if (_selectedId != null)
+            SelectRowById(_selectedId.Value);
+    }
+
+    private void SelectRowById(Guid id)
+    {
+        if (ItemsList.ItemsSource is not ICollectionView view) return;
+        foreach (var obj in view)
+        {
+            if (obj is VaultListRow row && row.Id == id)
+            {
+                ItemsList.SelectedItem = row;
+                return;
+            }
+        }
+    }
+
+    private PasswordItemDto? GetSelectedItem()
+    {
+        if (ItemsList.SelectedItem is VaultListRow row)
+            return App.Vault.Items.FirstOrDefault(x => x.Id == row.Id);
+        if (_selectedId is { } id)
+            return App.Vault.Items.FirstOrDefault(x => x.Id == id);
+        return null;
+    }
+
+    private void UpdateDetailPanel()
+    {
+        var item = GetSelectedItem();
+        if (item == null)
+        {
+            DetailEmptyHint.Visibility = Visibility.Visible;
+            DetailContent.Visibility = Visibility.Collapsed;
+            return;
+        }
+
+        DetailEmptyHint.Visibility = Visibility.Collapsed;
+        DetailContent.Visibility = Visibility.Visible;
+        _detailPasswordRevealed = false;
+
+        DetailTitle.Text = string.IsNullOrEmpty(item.Title) ? "未命名" : item.Title;
+        DetailUrl.Text = string.IsNullOrEmpty(item.Url) ? "—" : item.Url;
+        DetailUsername.Text = string.IsNullOrEmpty(item.Username) ? "—" : item.Username;
+        DetailNotes.Text = string.IsNullOrEmpty(item.Notes) ? "—" : item.Notes;
+        DetailWeakHint.Visibility = PasswordStrength.IsWeak(item.Password) ? Visibility.Visible : Visibility.Collapsed;
+        DetailFavoriteBtn.Content = item.IsFavorite ? "取消收藏" : "收藏";
+        RefreshDetailPasswordDisplay(item);
+        BuildCustomFieldsPanel(item);
+        App.Usage.RecordAccess(item.Id);
+    }
+
+    private void RefreshDetailPasswordDisplay(PasswordItemDto item)
+    {
+        if (string.IsNullOrEmpty(item.Password))
+        {
+            DetailPassword.Text = "—";
+            DetailRevealBtn.IsEnabled = false;
+        }
+        else
+        {
+            DetailRevealBtn.IsEnabled = true;
+            DetailRevealBtn.Content = _detailPasswordRevealed ? "隐藏" : "显示";
+            if (_detailPasswordRevealed)
+                DetailPassword.Text = item.Password;
+            else
+            {
+                var n = item.Password.Length;
+                var cap = 32;
+                DetailPassword.Text = new string('•', Math.Min(n, cap)) + (n > cap ? "…" : "");
+            }
+        }
+    }
+
+    private void BuildCustomFieldsPanel(PasswordItemDto item)
+    {
+        DetailCustomFieldsPanel.Children.Clear();
+        if (item.CustomFields.Count == 0) return;
+
+        DetailCustomFieldsPanel.Children.Add(new TextBlock
+        {
+            Text = "自定义字段",
+            Style = (Style)FindResource("TextCaptionStyle"),
+            Margin = new Thickness(0, 0, 0, 4)
+        });
+
+        foreach (var field in item.CustomFields)
+        {
+            var label = string.IsNullOrEmpty(field.Label) ? "（未命名）" : field.Label;
+            var val = string.IsNullOrEmpty(field.Value) ? "—" : field.Value;
+
+            var wrap = new StackPanel { Margin = new Thickness(0, 0, 0, 10) };
+            wrap.Children.Add(new TextBlock
+            {
+                Text = label,
+                FontWeight = FontWeights.SemiBold,
+                Margin = new Thickness(0, 0, 0, 2)
+            });
+
+            var row = new StackPanel { Orientation = System.Windows.Controls.Orientation.Horizontal };
+            row.Children.Add(new TextBlock
+            {
+                Text = val,
+                TextWrapping = TextWrapping.Wrap,
+                MaxWidth = 220
+            });
+            if (!string.IsNullOrEmpty(field.Value))
+            {
+                var copyBtn = new System.Windows.Controls.Button
+                {
+                    Content = "复制",
+                    Style = (Style)FindResource("GhostButtonStyle"),
+                    Margin = new Thickness(8, 0, 0, 0),
+                    Tag = field.Value
+                };
+                copyBtn.Click += (_, _) => CopyToClipboard((string)copyBtn.Tag);
+                row.Children.Add(copyBtn);
+            }
+            wrap.Children.Add(row);
+            DetailCustomFieldsPanel.Children.Add(wrap);
+        }
+    }
+
+    private void SearchOrFilter_Changed(object sender, RoutedEventArgs e)
+    {
+        if (!App.Vault.IsUnlocked) return;
+        if (FilterCombo.SelectedItem is ComboItem fi)
+            _listFilter = (VaultListFilter)fi.Value;
+        if (LayoutCombo.SelectedItem is ComboItem li)
+            _layoutMode = (VaultListLayout)li.Value;
+        RefreshItemList();
+    }
+
+    private void ItemsList_SelectionChanged(object sender, SelectionChangedEventArgs e)
+    {
+        if (ItemsList.SelectedItem is VaultListRow row)
+            _selectedId = row.Id;
+        UpdateDetailPanel();
+    }
+
+    private void ItemsList_MouseDoubleClick(object sender, MouseButtonEventArgs e)
+    {
+        CopyPasswordForSelection();
+    }
+
+    private void ItemsList_KeyDown(object sender, System.Windows.Input.KeyEventArgs e)
+    {
+        if (e.Key == Key.Enter)
+        {
+            CopyPasswordForSelection();
+            e.Handled = true;
+        }
+        else if (e.Key == Key.Delete)
+        {
+            DeleteItem_Click(sender, e);
+            e.Handled = true;
+        }
+    }
+
+    private void CopyPasswordForSelection()
+    {
+        var item = GetSelectedItem();
+        if (item == null || string.IsNullOrEmpty(item.Password)) return;
+        CopyToClipboard(item.Password);
+        App.Usage.RecordAccess(item.Id);
+    }
+
+    private static void CopyToClipboard(string text)
+    {
+        try { System.Windows.Clipboard.SetText(text); } catch { /* ignore */ }
+    }
+
+    private void DetailReveal_Click(object sender, RoutedEventArgs e)
+    {
+        _detailPasswordRevealed = !_detailPasswordRevealed;
+        var item = GetSelectedItem();
+        if (item != null) RefreshDetailPasswordDisplay(item);
+    }
+
+    private void DetailCopyPassword_Click(object sender, RoutedEventArgs e) => CopyPasswordForSelection();
+
+    private async void DetailFavorite_Click(object sender, RoutedEventArgs e)
+    {
+        var item = GetSelectedItem();
+        if (item == null) return;
+        await App.Vault.ToggleFavoriteAsync(item.Id);
+        RefreshUi();
+    }
+
+    private async void MergeDuplicates_Click(object sender, RoutedEventArgs e)
+    {
+        var n = await App.Vault.MergeDuplicateHostUsernamesAsync();
+        var msg = n > 0
+            ? $"已合并删除 {n} 条重复条目（同站点同用户名仅保留最新一条）。"
+            : "当前没有可合并的重复条目。";
+        System.Windows.MessageBox.Show(msg, "KeyNest", MessageBoxButton.OK, MessageBoxImage.Information);
+        RefreshUi();
     }
 
     private string ReadMasterPassword() =>
@@ -101,10 +422,7 @@ public partial class MainWindow : Window
         }
         if (!string.IsNullOrEmpty(App.Vault.PendingRecoveryKeyToDisplay))
         {
-            var dlg = new RecoveryKeyWindow(App.Vault.PendingRecoveryKeyToDisplay)
-            {
-                Owner = this
-            };
+            var dlg = new RecoveryKeyWindow(App.Vault.PendingRecoveryKeyToDisplay) { Owner = this };
             dlg.ShowDialog();
             App.Vault.AcknowledgeRecoveryKeySaved();
         }
@@ -165,6 +483,7 @@ public partial class MainWindow : Window
     {
         App.Vault.Lock();
         App.Bridge.Stop();
+        _selectedId = null;
         RefreshUi();
     }
 
@@ -178,7 +497,7 @@ public partial class MainWindow : Window
 
     private void AddItem_Click(object sender, RoutedEventArgs e)
     {
-        var dlg = new ItemEditWindow(null);
+        var dlg = new ItemEditWindow(null) { Owner = this };
         if (dlg.ShowDialog() == true && dlg.ResultItem != null)
         {
             _ = App.Vault.UpsertItemAsync(dlg.ResultItem);
@@ -188,8 +507,9 @@ public partial class MainWindow : Window
 
     private void EditItem_Click(object sender, RoutedEventArgs e)
     {
-        if (ItemsGrid.SelectedItem is not PasswordItemDto row) return;
-        var dlg = new ItemEditWindow(row);
+        var row = GetSelectedItem();
+        if (row == null) return;
+        var dlg = new ItemEditWindow(row) { Owner = this };
         if (dlg.ShowDialog() == true && dlg.ResultItem != null)
         {
             _ = App.Vault.UpsertItemAsync(dlg.ResultItem);
@@ -199,10 +519,13 @@ public partial class MainWindow : Window
 
     private async void DeleteItem_Click(object sender, RoutedEventArgs e)
     {
-        if (ItemsGrid.SelectedItem is not PasswordItemDto row) return;
+        var row = GetSelectedItem();
+        if (row == null) return;
         if (System.Windows.MessageBox.Show("确定删除该条目？", "KeyNest", MessageBoxButton.YesNo, MessageBoxImage.Question) !=
             MessageBoxResult.Yes) return;
         await App.Vault.RemoveItemAsync(row.Id);
+        App.Usage.Remove(row.Id);
+        if (_selectedId == row.Id) _selectedId = null;
         RefreshUi();
     }
 
@@ -213,5 +536,11 @@ public partial class MainWindow : Window
         e.Cancel = true;
         Hide();
         base.OnClosing(e);
+    }
+
+    private sealed class ComboItem(string label, object value)
+    {
+        public string Label { get; } = label;
+        public object Value { get; } = value;
     }
 }

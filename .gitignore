@@ -6,6 +6,7 @@ obj/
 publish/
 dist/
 .idea/
+.vscode/
 browser/chrome-extension.zip
 
 browser/*.crx
