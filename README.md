@@ -2,7 +2,7 @@
 
 面向 **Windows 10 / 11（x64）** 的 KeyNest 桌面客户端（**.NET 8 + WPF**），与 macOS 版共用同一保管库文件格式（`vault.keynest`），便于复制文件后在两台机器上使用同一数据库。
 
-> 当前版本：**0.4.4**（与 macOS 版功能对齐）
+> 当前版本：**0.5.0**（与 macOS 版功能对齐）
 
 维护者：**heureuxl** · [lq_17395@163.com](mailto:lq_17395@163.com)
 
@@ -53,7 +53,7 @@ scripts\publish-release.bat
 |------|------|
 | `KeyNest-Windows-Release\KeyNestForWin.exe` | 自包含单文件主程序 |
 | `KeyNest-Chrome.zip` / `KeyNest-Edge.zip` | 浏览器扩展（解压后「加载已解压的扩展程序」） |
-| `Chrome扩展安装说明.txt` / `Edge扩展安装说明.txt` | 安装步骤 |
+| `Chrome扩展安装说明.txt` / `Edge扩展安装说明.txt` | 中文安装说明（UTF-8 带 BOM，源码见 `scripts/extension-install-notes/`） |
 | `KeyNest-Windows-<版本>-win-x64.zip` | 上述内容的一键分发包 |
 
 ## 浏览器扩展安装
