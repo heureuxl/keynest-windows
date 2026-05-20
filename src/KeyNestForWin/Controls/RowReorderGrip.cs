@@ -25,6 +25,7 @@ public sealed class RowReorderGrip : Border
 
     private System.Windows.Point? _start;
     private bool _dragging;
+    private ListViewRowReorderSession? _session;
 
     public RowReorderGrip()
     {
@@ -35,7 +36,11 @@ public sealed class RowReorderGrip : Border
         PreviewMouseLeftButtonDown += OnMouseDown;
         PreviewMouseMove += OnMouseMove;
         PreviewMouseLeftButtonUp += OnMouseUp;
-        MouseLeave += (_, _) => TryCancelDrag();
+        MouseLeave += (_, _) =>
+        {
+            if (_session == null)
+                TryCancelDrag();
+        };
     }
 
     private static UIElement BuildDots()
@@ -73,7 +78,7 @@ public sealed class RowReorderGrip : Border
 
     private void OnMouseDown(object sender, MouseButtonEventArgs e)
     {
-        if (!IsEnabled) return;
+        if (!IsEnabled || _session != null) return;
         _start = e.GetPosition(this);
         _dragging = false;
         CaptureMouse();
@@ -82,36 +87,96 @@ public sealed class RowReorderGrip : Border
 
     private void OnMouseMove(object sender, System.Windows.Input.MouseEventArgs e)
     {
+        if (_session != null)
+        {
+            e.Handled = true;
+            return;
+        }
         if (!IsMouseCaptured || _start == null) return;
         if (!_dragging && (e.GetPosition(this) - _start.Value).Length > 4)
+        {
             _dragging = true;
+            TryStartSession(e);
+        }
         if (_dragging)
             e.Handled = true;
     }
 
+    private void TryStartSession(System.Windows.Input.MouseEventArgs e)
+    {
+        var item = FindAncestor<System.Windows.Controls.ListViewItem>(this);
+        var list = FindAncestor<System.Windows.Controls.ListView>(this);
+        if (item == null || list == null) return;
+
+        var grabOffset = e.GetPosition(item);
+        _session = ListViewRowReorderSession.TryBegin(
+            list,
+            item,
+            ItemId,
+            grabOffset,
+            args => ReorderTo?.Invoke(this, args),
+            EndSession);
+        if (_session == null) return;
+
+        ReleaseMouseCapture();
+        _start = null;
+    }
+
     private void OnMouseUp(object sender, MouseButtonEventArgs e)
     {
+        if (_session != null)
+        {
+            e.Handled = true;
+            return;
+        }
         if (!IsMouseCaptured) return;
         ReleaseMouseCapture();
-        if (_dragging)
-        {
-            ReorderTo?.Invoke(this, new RowReorderEventArgs(ItemId));
-            e.Handled = true;
-        }
         _start = null;
+        _dragging = false;
+    }
+
+    private void EndSession()
+    {
+        _session = null;
         _dragging = false;
     }
 
     private void TryCancelDrag()
     {
+        if (_session != null)
+        {
+            _session.Cancel();
+            return;
+        }
         if (!IsMouseCaptured) return;
         ReleaseMouseCapture();
         _start = null;
         _dragging = false;
     }
+
+    private static T? FindAncestor<T>(DependencyObject? current) where T : DependencyObject
+    {
+        while (current != null)
+        {
+            if (current is T match)
+                return match;
+            current = VisualTreeHelper.GetParent(current);
+        }
+        return null;
+    }
 }
 
-public sealed class RowReorderEventArgs(Guid sourceId) : EventArgs
+public sealed class RowReorderEventArgs : EventArgs
 {
-    public Guid SourceId { get; } = sourceId;
+    public Guid SourceId { get; }
+    /// <summary>将源条目移动到该 Id 之前；与 <see cref="InsertAtEnd"/> 互斥。</summary>
+    public Guid? InsertBeforeId { get; }
+    public bool InsertAtEnd { get; }
+
+    public RowReorderEventArgs(Guid sourceId, Guid? insertBeforeId, bool insertAtEnd = false)
+    {
+        SourceId = sourceId;
+        InsertBeforeId = insertBeforeId;
+        InsertAtEnd = insertAtEnd;
+    }
 }

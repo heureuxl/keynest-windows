@@ -152,9 +152,13 @@ public partial class MainWindow : Window
             return;
         }
 
-        var targetRow = GetRowAt(ItemsList, Mouse.GetPosition(ItemsList));
-        if (targetRow == null || targetRow.Id == e.SourceId) return;
-        await App.Vault.MoveItemBeforeAsync(e.SourceId, targetRow.Id);
+        if (e.InsertAtEnd)
+            await App.Vault.MoveItemToEndAsync(e.SourceId);
+        else if (e.InsertBeforeId is { } beforeId && beforeId != e.SourceId)
+            await App.Vault.MoveItemBeforeAsync(e.SourceId, beforeId);
+        else
+            return;
+
         RefreshUi();
     }
 
@@ -413,10 +417,7 @@ public partial class MainWindow : Window
         _selectedId = id;
         var dlg = new ItemEditWindow(item) { Owner = this };
         if (dlg.ShowDialog() == true && dlg.ResultItem != null)
-        {
-            _ = App.Vault.UpsertItemAsync(dlg.ResultItem);
-            RefreshUi();
-        }
+            _ = UpsertWithLimitConfirmAsync(dlg.ResultItem);
     }
 
     private void Settings_Click(object sender, RoutedEventArgs e)
@@ -542,10 +543,7 @@ public partial class MainWindow : Window
     {
         var dlg = new ItemEditWindow(null) { Owner = this };
         if (dlg.ShowDialog() == true && dlg.ResultItem != null)
-        {
-            _ = App.Vault.UpsertItemAsync(dlg.ResultItem);
-            RefreshUi();
-        }
+            _ = UpsertWithLimitConfirmAsync(dlg.ResultItem);
     }
 
     private void EditItem_Click(object sender, RoutedEventArgs e)
@@ -554,10 +552,26 @@ public partial class MainWindow : Window
         if (row == null) return;
         var dlg = new ItemEditWindow(row) { Owner = this };
         if (dlg.ShowDialog() == true && dlg.ResultItem != null)
+            _ = UpsertWithLimitConfirmAsync(dlg.ResultItem);
+    }
+
+    private async Task UpsertWithLimitConfirmAsync(PasswordItemDto item)
+    {
+        var prompt = App.Vault.GetSiteLimitSavePrompt(item);
+        if (prompt != null)
         {
-            _ = App.Vault.UpsertItemAsync(dlg.ResultItem);
-            RefreshUi();
+            if (System.Windows.MessageBox.Show(
+                    prompt.FormatMessage(),
+                    "KeyNest",
+                    MessageBoxButton.YesNo,
+                    MessageBoxImage.Warning) != MessageBoxResult.Yes)
+                return;
+            await App.Vault.UpsertItemAsync(item, allowEvictOldest: true);
         }
+        else
+            await App.Vault.UpsertItemAsync(item);
+
+        RefreshUi();
     }
 
     private async void DeleteItem_Click(object sender, RoutedEventArgs e)

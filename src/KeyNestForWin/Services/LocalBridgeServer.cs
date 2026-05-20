@@ -118,6 +118,38 @@ public sealed class LocalBridgeServer : IDisposable
                 return;
             }
 
+            if (req.HttpMethod == "GET" &&
+                (path == "/api/site-limit-check" || path.EndsWith("/api/site-limit-check", StringComparison.Ordinal)))
+            {
+                var url = req.QueryString["url"];
+                var username = req.QueryString["username"] ?? "";
+                if (string.IsNullOrEmpty(url))
+                {
+                    WriteJson(res, 400, """{"error":"missing url query"}""");
+                    return;
+                }
+                if (!_vault.IsUnlocked)
+                {
+                    WriteJson(res, 503, """{"error":"vault locked"}""");
+                    return;
+                }
+                var probe = new PasswordItemDto
+                {
+                    Id = Guid.NewGuid(),
+                    Username = username,
+                    Url = url
+                };
+                var prompt = _vault.GetSiteLimitSavePrompt(probe, url);
+                if (prompt == null)
+                {
+                    WriteJson(res, 200, """{"needsConfirm":false}""");
+                    return;
+                }
+                var check = _vault.ToBridgeSiteLimitCheck(prompt);
+                WriteJson(res, 200, JsonSerializer.Serialize(check, JsonOptions));
+                return;
+            }
+
             if (req.HttpMethod == "POST" &&
                 (path == "/api/save" || path.EndsWith("/api/save", StringComparison.Ordinal)))
             {
@@ -163,7 +195,22 @@ public sealed class LocalBridgeServer : IDisposable
                     Url = urlStr,
                     Notes = ""
                 };
-                _vault.AddOrUpdateItemAsync(item, urlStr).GetAwaiter().GetResult();
+                var limitPrompt = _vault.GetSiteLimitSavePrompt(item, urlStr);
+                var allowEvict = payload.ConfirmEvict;
+                // 扩展已在网页内确认过上限时不再弹桌面窗（避免与浏览器 confirm 重复）
+                if (limitPrompt != null && !allowEvict && !PromptSiteLimitOnUiThread(limitPrompt))
+                {
+                    WriteJson(res, 200, """{"ok":false,"cancelled":true}""");
+                    return;
+                }
+                if (limitPrompt != null)
+                    allowEvict = true;
+                var saved = _vault.AddOrUpdateItemAsync(item, urlStr, allowEvict).GetAwaiter().GetResult();
+                if (!saved)
+                {
+                    WriteJson(res, 200, """{"ok":false,"cancelled":true}""");
+                    return;
+                }
                 WriteJson(res, 200, """{"ok":true}""");
                 return;
             }
@@ -174,6 +221,23 @@ public sealed class LocalBridgeServer : IDisposable
         {
             try { ctx.Response.StatusCode = 500; ctx.Response.Close(); } catch { /* ignore */ }
         }
+    }
+
+    private static bool PromptSiteLimitOnUiThread(SiteLimitSavePrompt prompt)
+    {
+        var app = System.Windows.Application.Current;
+        if (app?.Dispatcher == null)
+            return false;
+        var approved = false;
+        app.Dispatcher.Invoke(() =>
+        {
+            approved = System.Windows.MessageBox.Show(
+                prompt.FormatMessage(),
+                "KeyNest",
+                System.Windows.MessageBoxButton.YesNo,
+                System.Windows.MessageBoxImage.Warning) == System.Windows.MessageBoxResult.Yes;
+        });
+        return approved;
     }
 
     private static void AddCors(HttpListenerResponse res)

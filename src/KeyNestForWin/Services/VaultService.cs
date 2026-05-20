@@ -368,15 +368,76 @@ public sealed class VaultService
         return uri.Host.ToLowerInvariant();
     }
 
+    /// <summary>新增用户名且已达站点上限时返回确认信息；更新已有用户名或未满则不返回。</summary>
+    public SiteLimitSavePrompt? GetSiteLimitSavePrompt(PasswordItemDto item, string? pageUrl = null)
+    {
+        if (!IsUnlocked) return null;
+        var probe = new PasswordItemDto
+        {
+            Id = item.Id,
+            Title = item.Title,
+            Username = item.Username,
+            Url = item.Url,
+            SiteEndpoint = item.SiteEndpoint
+        };
+        ApplyAutoSiteEndpoint(probe, pageUrl);
+        var siteKey = SiteIdentityKey(probe);
+        if (siteKey == null) return null;
+
+        var userKey = NormalizeUsernameKey(probe.Username);
+        var group = Items.Where(x => SiteIdentityKey(x) == siteKey).ToList();
+        if (group.Any(x => NormalizeUsernameKey(x.Username) == userKey))
+            return null;
+        if (group.Count < _settings.MaxAccountsPerSiteHost)
+            return null;
+
+        var oldest = Items.Select((x, idx) => (x, idx))
+            .Where(t => SiteIdentityKey(t.x) == siteKey)
+            .OrderBy(t => t.idx)
+            .FirstOrDefault();
+        if (oldest.x == null) return null;
+
+        var siteLabel = SiteIdentityService.FormatGroupTitle(siteKey);
+        return new SiteLimitSavePrompt
+        {
+            SiteLabel = siteLabel,
+            MaxAccounts = _settings.MaxAccountsPerSiteHost,
+            CurrentCount = group.Count,
+            IncomingUsername = probe.Username,
+            EvictTitle = string.IsNullOrEmpty(oldest.x.Title) ? "未命名" : oldest.x.Title,
+            EvictUsername = oldest.x.Username
+        };
+    }
+
+    public BridgeSiteLimitCheckDto ToBridgeSiteLimitCheck(SiteLimitSavePrompt prompt) => new()
+    {
+        NeedsConfirm = true,
+        MaxAccounts = prompt.MaxAccounts,
+        CurrentCount = prompt.CurrentCount,
+        SiteLabel = prompt.SiteLabel,
+        EvictTitle = prompt.EvictTitle,
+        EvictUsername = prompt.EvictUsername,
+        IncomingUsername = prompt.IncomingUsername
+    };
+
     /// <summary>Chrome 扩展保存：按站点环境+用户名合并；<paramref name="pageUrl"/> 用于解析 hosts IP。</summary>
-    public async Task AddOrUpdateItemAsync(PasswordItemDto item, string? pageUrl = null, CancellationToken ct = default)
+    /// <returns>是否已写入（达上限且未确认时为 false）。</returns>
+    public async Task<bool> AddOrUpdateItemAsync(
+        PasswordItemDto item,
+        string? pageUrl = null,
+        bool allowEvictOldest = false,
+        CancellationToken ct = default)
     {
         ApplyAutoSiteEndpoint(item, pageUrl);
-        await MergeIncomingBySiteHostAsync(item, ct).ConfigureAwait(false);
+        return await MergeIncomingBySiteHostAsync(item, ct, allowEvictOldest).ConfigureAwait(false);
     }
 
     /// <summary>界面新建/编辑：若 Id 已存在则整行替换，否则按主机名规则合并。</summary>
-    public async Task UpsertItemAsync(PasswordItemDto item, CancellationToken ct = default)
+    /// <returns>是否已写入（达上限且未确认时为 false）。</returns>
+    public async Task<bool> UpsertItemAsync(
+        PasswordItemDto item,
+        bool allowEvictOldest = false,
+        CancellationToken ct = default)
     {
         ApplyAutoSiteEndpoint(item);
         for (var i = 0; i < Items.Count; i++)
@@ -386,12 +447,15 @@ public sealed class VaultService
             EnforceMaxAccountsPerSiteHost();
             await PersistVaultV2Async(ct).ConfigureAwait(false);
             StateChanged?.Invoke(this, EventArgs.Empty);
-            return;
+            return true;
         }
-        await MergeIncomingBySiteHostAsync(item, ct).ConfigureAwait(false);
+        return await MergeIncomingBySiteHostAsync(item, ct, allowEvictOldest).ConfigureAwait(false);
     }
 
-    private async Task MergeIncomingBySiteHostAsync(PasswordItemDto item, CancellationToken ct)
+    private async Task<bool> MergeIncomingBySiteHostAsync(
+        PasswordItemDto item,
+        CancellationToken ct,
+        bool allowEvictOldest)
     {
         var siteKey = SiteIdentityKey(item);
         if (siteKey == null)
@@ -399,7 +463,7 @@ public sealed class VaultService
             Items.Add(item);
             await PersistVaultV2Async(ct).ConfigureAwait(false);
             StateChanged?.Invoke(this, EventArgs.Empty);
-            return;
+            return true;
         }
         var userKey = NormalizeUsernameKey(item.Username);
         var group = Items.Where(x => SiteIdentityKey(x) == siteKey).ToList();
@@ -422,6 +486,8 @@ public sealed class VaultService
         {
             if (group.Count >= _settings.MaxAccountsPerSiteHost)
             {
+                if (!allowEvictOldest)
+                    return false;
                 var oldest = Items.Select((x, idx) => (x, idx))
                     .Where(t => SiteIdentityKey(t.x) == siteKey)
                     .OrderBy(t => t.idx).FirstOrDefault();
@@ -432,6 +498,7 @@ public sealed class VaultService
         }
         await PersistVaultV2Async(ct).ConfigureAwait(false);
         StateChanged?.Invoke(this, EventArgs.Empty);
+        return true;
     }
 
     public async Task RemoveItemAsync(Guid id, CancellationToken ct = default)
@@ -474,6 +541,19 @@ public sealed class VaultService
         Items.RemoveAt(from);
         if (from < to) to--;
         Items.Insert(to, dragged);
+        await PersistVaultV2Async(ct).ConfigureAwait(false);
+        StateChanged?.Invoke(this, EventArgs.Empty);
+    }
+
+    public async Task MoveItemToEndAsync(Guid draggedId, CancellationToken ct = default)
+    {
+        var dragged = Items.FirstOrDefault(x => x.Id == draggedId);
+        if (dragged == null) return;
+        var from = Items.IndexOf(dragged);
+        if (from < 0) return;
+        if (from == Items.Count - 1) return;
+        Items.RemoveAt(from);
+        Items.Add(dragged);
         await PersistVaultV2Async(ct).ConfigureAwait(false);
         StateChanged?.Invoke(this, EventArgs.Empty);
     }

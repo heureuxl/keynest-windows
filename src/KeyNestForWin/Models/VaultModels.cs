@@ -56,6 +56,8 @@ public sealed class BridgeSavePayloadDto
     public string Url { get; set; } = "";
     public string Username { get; set; } = "";
     public string Password { get; set; } = "";
+    /// <summary>用户已确认移除最早账号以腾出名额。</summary>
+    public bool ConfirmEvict { get; set; }
 }
 
 /// <summary>主界面列表行（含分组键）。</summary>
