@@ -2,6 +2,8 @@ using System.IO;
 using System.Net;
 using System.Text;
 using System.Text.Json;
+using System.Windows;
+using System.Windows.Threading;
 using KeyNestForWin.Models;
 
 namespace KeyNestForWin.Services;
@@ -77,6 +79,14 @@ public sealed class LocalBridgeServer : IDisposable
         }
     }
 
+    private static T RunOnUiThread<T>(Func<T> action)
+    {
+        var dispatcher = Application.Current?.Dispatcher;
+        if (dispatcher == null || dispatcher.CheckAccess())
+            return action();
+        return dispatcher.Invoke(action, DispatcherPriority.Normal);
+    }
+
     private void HandleRequest(HttpListenerContext ctx)
     {
         try
@@ -101,12 +111,12 @@ public sealed class LocalBridgeServer : IDisposable
                     WriteJson(res, 400, """{"error":"missing url query"}""");
                     return;
                 }
-                if (!_vault.IsUnlocked)
+                if (!RunOnUiThread(() => _vault.IsUnlocked))
                 {
                     WriteJson(res, 503, """{"error":"vault locked"}""");
                     return;
                 }
-                var matches = _vault.MatchCredentialsForPage(q);
+                var matches = RunOnUiThread(() => _vault.MatchCredentialsForPage(q));
                 var payload = matches.Select(x => new BridgeCredentialDto
                 {
                     Username = x.Username,
@@ -128,7 +138,7 @@ public sealed class LocalBridgeServer : IDisposable
                     WriteJson(res, 400, """{"error":"missing url query"}""");
                     return;
                 }
-                if (!_vault.IsUnlocked)
+                if (!RunOnUiThread(() => _vault.IsUnlocked))
                 {
                     WriteJson(res, 503, """{"error":"vault locked"}""");
                     return;
@@ -139,7 +149,7 @@ public sealed class LocalBridgeServer : IDisposable
                     Username = username,
                     Url = url
                 };
-                var prompt = _vault.GetSiteLimitSavePrompt(probe, url);
+                var prompt = RunOnUiThread(() => _vault.GetSiteLimitSavePrompt(probe, url));
                 if (prompt == null)
                 {
                     WriteJson(res, 200, """{"needsConfirm":false}""");
@@ -153,7 +163,7 @@ public sealed class LocalBridgeServer : IDisposable
             if (req.HttpMethod == "POST" &&
                 (path == "/api/save" || path.EndsWith("/api/save", StringComparison.Ordinal)))
             {
-                if (!_vault.IsUnlocked)
+                if (!RunOnUiThread(() => _vault.IsUnlocked))
                 {
                     WriteJson(res, 503, """{"error":"vault locked"}""");
                     return;
@@ -178,7 +188,7 @@ public sealed class LocalBridgeServer : IDisposable
                 }
                 var title = payload.Title.Trim();
                 var urlStr = payload.Url.Trim();
-                if (_vault.ShouldSkipBridgeSave(urlStr, payload.Username, payload.Password))
+                if (RunOnUiThread(() => _vault.ShouldSkipBridgeSave(urlStr, payload.Username, payload.Password)))
                 {
                     WriteJson(res, 200, """{"ok":true,"unchanged":true}""");
                     return;
@@ -195,49 +205,33 @@ public sealed class LocalBridgeServer : IDisposable
                     Url = urlStr,
                     Notes = ""
                 };
-                var limitPrompt = _vault.GetSiteLimitSavePrompt(item, urlStr);
-                var allowEvict = payload.ConfirmEvict;
-                // 扩展已在网页内确认过上限时不再弹桌面窗（避免与浏览器 confirm 重复）
-                if (limitPrompt != null && !allowEvict && !PromptSiteLimitOnUiThread(limitPrompt))
+                try
                 {
-                    WriteJson(res, 200, """{"ok":false,"cancelled":true}""");
-                    return;
+                    // 扩展已在浏览器内完成保存/站点上限确认；桥接路径始终允许驱逐最旧条目
+                    var saved = RunOnUiThread(() =>
+                        _vault.AddOrUpdateItemAsync(item, urlStr, allowEvictOldest: true).GetAwaiter().GetResult());
+                    if (!saved)
+                    {
+                        WriteJson(res, 500, """{"error":"save rejected at site limit"}""");
+                        return;
+                    }
+                    WriteJson(res, 200, """{"ok":true}""");
                 }
-                if (limitPrompt != null)
-                    allowEvict = true;
-                var saved = _vault.AddOrUpdateItemAsync(item, urlStr, allowEvict).GetAwaiter().GetResult();
-                if (!saved)
+                catch (Exception ex)
                 {
-                    WriteJson(res, 200, """{"ok":false,"cancelled":true}""");
-                    return;
+                    System.Diagnostics.Debug.WriteLine($"KeyNest bridge save failed: {ex}");
+                    WriteJson(res, 500, """{"error":"save failed"}""");
                 }
-                WriteJson(res, 200, """{"ok":true}""");
                 return;
             }
 
             WriteJson(res, 404, """{"error":"unknown path"}""");
         }
-        catch
+        catch (Exception ex)
         {
+            System.Diagnostics.Debug.WriteLine($"KeyNest bridge request failed: {ex}");
             try { ctx.Response.StatusCode = 500; ctx.Response.Close(); } catch { /* ignore */ }
         }
-    }
-
-    private static bool PromptSiteLimitOnUiThread(SiteLimitSavePrompt prompt)
-    {
-        var app = System.Windows.Application.Current;
-        if (app?.Dispatcher == null)
-            return false;
-        var approved = false;
-        app.Dispatcher.Invoke(() =>
-        {
-            approved = System.Windows.MessageBox.Show(
-                prompt.FormatMessage(),
-                "KeyNest",
-                System.Windows.MessageBoxButton.YesNo,
-                System.Windows.MessageBoxImage.Warning) == System.Windows.MessageBoxResult.Yes;
-        });
-        return approved;
     }
 
     private static void AddCors(HttpListenerResponse res)
