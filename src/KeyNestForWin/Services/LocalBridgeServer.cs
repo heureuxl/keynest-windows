@@ -81,7 +81,7 @@ public sealed class LocalBridgeServer : IDisposable
 
     private static T RunOnUiThread<T>(Func<T> action)
     {
-        var dispatcher = Application.Current?.Dispatcher;
+        var dispatcher = System.Windows.Application.Current?.Dispatcher;
         if (dispatcher == null || dispatcher.CheckAccess())
             return action();
         return dispatcher.Invoke(action, DispatcherPriority.Normal);
@@ -149,13 +149,7 @@ public sealed class LocalBridgeServer : IDisposable
                     Username = username,
                     Url = url
                 };
-                var prompt = RunOnUiThread(() => _vault.GetSiteLimitSavePrompt(probe, url));
-                if (prompt == null)
-                {
-                    WriteJson(res, 200, """{"needsConfirm":false}""");
-                    return;
-                }
-                var check = _vault.ToBridgeSiteLimitCheck(prompt);
+                var check = RunOnUiThread(() => _vault.GetBridgeSiteLimitCheck(url, username));
                 WriteJson(res, 200, JsonSerializer.Serialize(check, JsonOptions));
                 return;
             }

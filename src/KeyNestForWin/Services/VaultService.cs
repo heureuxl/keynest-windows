@@ -357,6 +357,10 @@ public sealed class VaultService
     private static string NormalizeUsernameKey(string username) =>
         username.Trim().ToLowerInvariant();
 
+    /// <summary>同一站点环境下已保存的不同用户名个数（与 EnforceMaxAccountsPerSiteHost 一致）。</summary>
+    private static int DistinctUsernameCountInSiteGroup(IEnumerable<PasswordItemDto> group) =>
+        group.Select(x => NormalizeUsernameKey(x.Username)).Distinct().Count();
+
     /// <summary>站点分组与页面匹配：仅主机名（域名或 IP，小写），不含路径、查询与端口。</summary>
     public static string? NormalizedSiteHostKey(string raw)
     {
@@ -388,7 +392,8 @@ public sealed class VaultService
         var group = Items.Where(x => SiteIdentityKey(x) == siteKey).ToList();
         if (group.Any(x => NormalizeUsernameKey(x.Username) == userKey))
             return null;
-        if (group.Count < _settings.MaxAccountsPerSiteHost)
+        var distinctCount = DistinctUsernameCountInSiteGroup(group);
+        if (distinctCount < _settings.MaxAccountsPerSiteHost)
             return null;
 
         var oldest = Items.Select((x, idx) => (x, idx))
@@ -402,7 +407,7 @@ public sealed class VaultService
         {
             SiteLabel = siteLabel,
             MaxAccounts = _settings.MaxAccountsPerSiteHost,
-            CurrentCount = group.Count,
+            CurrentCount = distinctCount,
             IncomingUsername = probe.Username,
             EvictTitle = string.IsNullOrEmpty(oldest.x.Title) ? "未命名" : oldest.x.Title,
             EvictUsername = oldest.x.Username
@@ -419,6 +424,34 @@ public sealed class VaultService
         EvictUsername = prompt.EvictUsername,
         IncomingUsername = prompt.IncomingUsername
     };
+
+    /// <summary>扩展查询站点上限；始终返回当前设置的上限与已存不同用户名数量。</summary>
+    public BridgeSiteLimitCheckDto GetBridgeSiteLimitCheck(string pageUrl, string username)
+    {
+        var max = _settings.MaxAccountsPerSiteHost;
+        var probe = new PasswordItemDto
+        {
+            Id = Guid.NewGuid(),
+            Username = username,
+            Url = pageUrl
+        };
+        ApplyAutoSiteEndpoint(probe, pageUrl);
+        var siteKey = SiteIdentityKey(probe);
+        var distinctCount = siteKey == null
+            ? 0
+            : DistinctUsernameCountInSiteGroup(Items.Where(x => SiteIdentityKey(x) == siteKey));
+        var prompt = GetSiteLimitSavePrompt(probe, pageUrl);
+        if (prompt != null)
+            return ToBridgeSiteLimitCheck(prompt);
+        return new BridgeSiteLimitCheckDto
+        {
+            NeedsConfirm = false,
+            MaxAccounts = max,
+            CurrentCount = distinctCount,
+            SiteLabel = siteKey == null ? "" : SiteIdentityService.FormatGroupTitle(siteKey),
+            IncomingUsername = username
+        };
+    }
 
     /// <summary>Chrome 扩展保存：按站点环境+用户名合并；<paramref name="pageUrl"/> 用于解析 hosts IP。</summary>
     /// <returns>是否已写入（达上限且未确认时为 false）。</returns>
@@ -484,7 +517,7 @@ public sealed class VaultService
         }
         else
         {
-            if (group.Count >= _settings.MaxAccountsPerSiteHost)
+            if (DistinctUsernameCountInSiteGroup(group) >= _settings.MaxAccountsPerSiteHost)
             {
                 if (!allowEvictOldest)
                     return false;
